@@ -1,15 +1,14 @@
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from joblib import load
 
 from .analyzer import analyzer
 from .ballchasing_api import get_replay
-from .db import ranked_doubles
-from .preprocessing import extract_players
 from .ranking import Ranking
 
 
-population_doubles = extract_players(ranked_doubles.find({}))
+population_doubles = pd.read_sql_table("ranked_doubles", "sqlite:///database/database.db")
 
 models = {
     "ranked-doubles": {
