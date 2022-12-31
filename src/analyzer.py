@@ -1,6 +1,6 @@
 from typing import List
 
-from .preprocessing import extract_players
+from .pre_processing import extract_players
 from .ranking import Ranking
 
 

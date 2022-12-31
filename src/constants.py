@@ -1,27 +1,19 @@
-RANKS = [
-    "bronze-1",
-    "bronze-2",
-    "bronze-3",
-    "silver-1",
-    "silver-2",
-    "silver-3",
-    "gold-1",
-    "gold-2",
-    "gold-3",
-    "platinum-1",
-    "platinum-2",
-    "platinum-3",
-    "diamond-1",
-    "diamond-2",
-    "diamond-3",
-    "champion-1",
-    "champion-2",
-    "champion-3",
-    "grand-champion-1",
-    "grand-champion-2",
-    "grand-champion-3",
-    "supersonic-legend",
-]
+import json
+
+
+def get_constants():
+    with open("src/constants.json", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_constants(constants):
+    with open("src/constants.json", "w", encoding="utf-8") as f:
+        json.dump(constants, f, indent=4)
+
+
+CONSTANTS = get_constants()
+
+RANKS = CONSTANTS["ranks"]
 
 FEATURES_NAMES = [
     "shots",

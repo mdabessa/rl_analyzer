@@ -8,12 +8,12 @@ from .ballchasing_api import get_replay
 from .ranking import Ranking
 
 
-population_doubles = pd.read_sql_table("ranked_doubles", "sqlite:///database/database.db")
+population_doubles = pd.read_csv("./population/ranked-doubles.csv")
 
 models = {
     "ranked-doubles": {
         "ranking": Ranking(population_doubles),
-        "model": load("./src/ml_models/ranked_doubles.joblib"),
+        "model": load("./src/models/ranked-doubles.joblib"),
     }
 }
 
