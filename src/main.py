@@ -1,21 +1,9 @@
-import pandas as pd
 from fastapi import FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
-from joblib import load
 
-from .analyzer import analyzer
+from .analyzer import Model
 from .ballchasing_api import get_replay
-from .ranking import Ranking
 
-
-population_doubles = pd.read_csv("./population/ranked-doubles.csv")
-
-models = {
-    "ranked-doubles": {
-        "ranking": Ranking(population_doubles),
-        "model": load("./src/models/ranked-doubles.joblib"),
-    }
-}
 
 app = FastAPI()
 
@@ -46,12 +34,13 @@ async def replay(replay_id: str, authorization: str | None = Header(default=None
 
     replay = response.json()
 
-    if replay["playlist_id"] not in models:
+    model = Model.get_model(replay["playlist_id"])
+
+    if model is None:
         raise HTTPException(
             status_code=400, detail=f"Replay playlist is not compatible."
         )
 
-    model = models[replay["playlist_id"]]
-    analyzer(model["model"], [replay], model["ranking"])
+    model.analyze(replay)
 
     return replay
