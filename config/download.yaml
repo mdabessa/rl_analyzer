@@ -1,0 +1,44 @@
+# Configuração do downloader de replays (Ballchasing -> data lake em pastas).
+# Edite à vontade. A pasta base onde ficam replays/, manifests/ e state.json é
+# passada via CLI (--data-dir), pois ela varia entre máquina local e VPS
+# (ambas com acesso ao Nextcloud).
+
+# Temporadas a varrer, no formato da Ballchasing ("f14", "f15", ...).
+seasons:
+  - "f12"
+  - "f13"
+  - "f14"
+  - "f15"
+
+# Playlists (modos ranqueados).
+playlists:
+  - "ranked-doubles"
+  - "ranked-duels"
+  - "ranked-standard"
+
+# Faixa de tiers (ranks), inclusiva. 0 = bronze-1 ... 21 = supersonic-legend.
+tiers:
+  start: 0
+  end: 21
+
+# Replays por página (máximo da API: 200).
+count: 200
+
+# Filtrar apenas replays de jogadores pro? (true / false)
+pro: false
+
+# Limite global de requisições à API por hora (list + detalhes).
+rate_limit_per_hour: 490
+
+# Ordenação da busca. IMPORTANTE: manter "replay-date" + "asc" para que a
+# paginação seja estável (replays novos caem no fim) e a dedup funcione.
+sort_by: "replay-date"
+sort_dir: "asc"
+
+# Retry em erros de rede / HTTP 429 / 5xx (backoff exponencial).
+max_retries: 3
+retry_backoff: 5
+
+# Quando todos os buckets estiverem esgotados, aguarda esse tempo (segundos)
+# antes de re-procurar por replays novos. 0 desliga o modo infinito.
+rescan_interval: 0
