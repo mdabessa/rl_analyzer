@@ -37,22 +37,25 @@ logger = logging.getLogger(__name__)
 
 
 class RateLimiter:
-    """Janela deslizante: no máximo ``per_hour`` requisições por hora."""
+    """Rate limit contínuo: espaça as requisições ao longo da hora.
+
+    Ex.: 490/h => 1 requisição a cada ~7.35s. O comportamento anterior de
+    "janela deslizante" permitia uma rajada de até ``per_hour`` requisições no
+    início (estourando o limite por segundo da API) e depois travava o resto
+    da hora — com espaçamento contínuo o ritmo fica uniforme o tempo todo.
+    """
 
     def __init__(self, per_hour: float) -> None:
-        self.per_hour = max(1.0, float(per_hour))
-        self._times: list[float] = []
+        self.interval = 3600.0 / max(1.0, float(per_hour))
+        self._next = 0.0
 
     def wait(self) -> None:
         now = time.time()
-        window_start = now - 3600.0
-        self._times = [t for t in self._times if t > window_start]
-        if len(self._times) >= self.per_hour:
-            sleep_until = self._times[0] + 3600.0
-            if sleep_until > now:
-                time.sleep(sleep_until - now)
-            now = sleep_until
-        self._times.append(now)
+        if self._next < now:
+            self._next = now  # alcança o cronograma (sem "dormir a mais" se atrasou)
+        if self._next > now:
+            time.sleep(self._next - now)
+        self._next += self.interval
 
 
 class Downloader:
