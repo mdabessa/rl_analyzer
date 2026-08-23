@@ -1,12 +1,16 @@
 """Orquestra o download de replays da Ballchasing para um data lake em pastas.
 
-Estratégia (round-robin com paginação estável):
+Estratégia (round-robin com paginação por cursor):
 
-- Cada passada avança **1 página** (``count``) em cada bucket
+- Cada passada avança **1 lote** (``count``) em cada bucket
   (season/playlist/tier) não esgotado, mantendo os buckets com tamanhos iguais.
+- A paginação usa **cursor por data** (``replay-date-after``) em vez de número
+  de página: ordenado por ``replay-date asc``, o cursor é a data do último
+  replay reivindicado. Isso evita o bug de a API devolver páginas sobrepostas
+  quando a ordenação não é única (paginação por página).
 - A paginação é feita sobre um **manifest local de IDs** (estável): a API só é
   consultada para crescer o bucket; no restart não se re-gasta queries de list
-  em páginas já processadas.
+  em lotes já processados.
 - A dedup por arquivo (existência de ``<id>.json``) evita re-baixar detalhes.
 - Quando todos os buckets esgotam, o loop dorme ``rescan_interval`` e re-procura
   por replays novos (modo infinito).
@@ -99,10 +103,9 @@ class Downloader:
     def _rank(self, bucket: Bucket) -> str:
         return RANKS[bucket.tier]
 
-    def _list_filters(self, bucket: Bucket, page: int) -> dict:
+    def _list_filters(self, bucket: Bucket, replay_date_after: str | None = None) -> dict:
         filters = {
             "count": self.count,
-            "page": page,
             "playlist": bucket.playlist,
             "min-rank": self._rank(bucket),
             "max-rank": self._rank(bucket),
@@ -110,6 +113,10 @@ class Downloader:
             "sort-by": self.config.get("sort_by", "replay-date"),
             "sort-dir": self.config.get("sort_dir", "asc"),
         }
+        # Paginação por cursor de data (estável) em vez de `page`, que a API
+        # devolve sobreposta quando a ordenação por replay-date não é única.
+        if replay_date_after:
+            filters["replay-date-after"] = replay_date_after
         pro = self.config.get("pro")
         if pro is not None:
             filters["pro"] = str(pro).lower()
@@ -159,15 +166,15 @@ class Downloader:
             raise RuntimeError(f"{what} falhou após {self.max_retries} tentativas{suffix}")
         return None
 
-    def fetch_list(self, bucket: Bucket, page: int) -> list[dict]:
+    def fetch_list(self, bucket: Bucket, replay_date_after: str | None = None) -> list[dict]:
         # O header é resolvido dentro da API (src.ballchasing_api) via env.
         resp = self._request(
-            lambda: api.get_replays(filters=self._list_filters(bucket, page)),
-            f"list {bucket.key()} p{page}",
+            lambda: api.get_replays(filters=self._list_filters(bucket, replay_date_after)),
+            f"list {bucket.key()} after={replay_date_after or 'inicio'}",
             fatal=True,
         )
         if resp is None:  # fatal=True nunca retorna None, mas protege o type-checker
-            raise RuntimeError(f"list {bucket.key()} p{page}: resposta nula")
+            raise RuntimeError(f"list {bucket.key()}: resposta nula")
 
         return resp.json().get("list", [])
 
@@ -181,7 +188,10 @@ class Downloader:
 
 
     def process_bucket(self, bucket: Bucket) -> str:
-        """Avança um bucket em 1 página e baixa pendentes.
+        """Avança um bucket em 1 lote (count) e baixa pendentes.
+
+        Usa cursor de data (replay-date-after) em vez de página, evitando as
+        páginas sobrepostas que a API devolve com ordenação não-única.
 
         Retorna ``"progressed"`` (ainda há dados) ou ``"exhausted"`` (fim do bucket).
         """
@@ -197,8 +207,14 @@ class Downloader:
             self._update_state(bucket, manifest)
             return "exhausted"
 
-        next_page = manifest.get("page", 0) + 1
-        replays = self.fetch_list(bucket, next_page)
+        cursor = manifest.get("last_date")  # None = começa do início
+        replays = self.fetch_list(bucket, cursor)
+
+        if not replays:
+            manifest["exhausted"] = True
+            save_manifest(self.data_dir, bucket, manifest)
+            self._update_state(bucket, manifest)
+            return "exhausted"
 
         known = set(manifest["ids"])
         added = 0
@@ -210,14 +226,22 @@ class Downloader:
             known.add(rid)
             added += 1
 
-        manifest["page"] = next_page
+        # Avança o cursor para a data mais recente do lote (ordenação asc).
+        dates = [r.get("date") for r in replays if r.get("date")]
+        new_cursor = max(dates) if dates else cursor
+        manifest["last_date"] = new_cursor
+
         if len(replays) < self.count:
             manifest["exhausted"] = True
-        if added == 0 and not manifest.get("exhausted"):
+        elif added == 0 and new_cursor == cursor:
+            # Sem IDs novos E cursor não avançou => a API não está honrando o
+            # cursor (ou só há repetidos). Para de gastar query neste bucket.
+            manifest["exhausted"] = True
             logger.warning(
-                "%s — página %d não adicionou IDs novos (drift na ordenação?)",
-                bucket.key(), next_page,
+                "%s — lote sem progresso (cursor não avançou, %d novos); marcando exhausted",
+                bucket.key(), added,
             )
+
         save_manifest(self.data_dir, bucket, manifest)
 
         self._download_pending(bucket, manifest)
@@ -250,7 +274,7 @@ class Downloader:
             bucket,
             {
                 "rank": manifest.get("rank"),
-                "page": manifest.get("page", 0),
+                "last_date": manifest.get("last_date"),
                 "manifest": len(manifest["ids"]),
                 "downloaded": self._count_downloaded(bucket, manifest),
                 "exhausted": manifest.get("exhausted", False),

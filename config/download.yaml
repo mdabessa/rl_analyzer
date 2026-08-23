@@ -30,8 +30,9 @@ pro: false
 # Limite global de requisições à API por hora (list + detalhes).
 rate_limit_per_hour: 490
 
-# Ordenação da busca. IMPORTANTE: manter "replay-date" + "asc" para que a
-# paginação seja estável (replays novos caem no fim) e a dedup funcione.
+# Ordenação da busca. IMPORTANTE: manter "replay-date" + "asc" — a paginação é
+# feita por cursor de data (replay-date-after) sobre essa ordem: replays novos
+# caem no fim e a dedup cuida de qualquer sobreposição.
 sort_by: "replay-date"
 sort_dir: "asc"
 

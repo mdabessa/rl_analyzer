@@ -108,6 +108,7 @@ def load_manifest(data_dir: Path, bucket: Bucket) -> dict:
             "tier": bucket.tier,
             "rank": None,
             "page": 0,
+            "last_date": None,
             "ids": [],
             "exhausted": False,
         }
