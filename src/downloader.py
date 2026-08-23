@@ -72,6 +72,7 @@ class Downloader:
         self.count = int(config.get("count", 200))
         self.max_retries = int(config.get("max_retries", 5))
         self.retry_backoff = float(config.get("retry_backoff", 5.0))
+        self.skip_after_failures = int(config.get("skip_after_failures", 5))
         self.rescan_interval = float(config.get("rescan_interval", 1800))
         self.buckets = self._build_buckets()
         self._install_signal_handlers()
@@ -249,19 +250,54 @@ class Downloader:
         return "exhausted" if manifest.get("exhausted") else "progressed"
 
     def _download_pending(self, bucket: Bucket, manifest: dict) -> int:
-        """Baixa os detalhes dos IDs do manifest que ainda não existem no disco."""
+        """Baixa os detalhes dos IDs do manifest que ainda não existem no disco.
+
+        IDs que falham repetidamente (ex.: replay removido/privado) são marcados
+        em ``manifest["skipped"]`` após ``skip_after_failures`` falhas
+        consecutivas, para não gastar requests tentando sempre. Um sucesso zera
+        a contagem de falhas daquele ID.
+        """
+        skipped_list = manifest.setdefault("skipped", [])
+        skipped = set(skipped_list)
+        failed = manifest.setdefault("failed", {})
+        changed = False
         downloaded = 0
+
         for rid in manifest["ids"]:
             if self.stop_event.is_set():
                 break
-            if replay_exists(self.data_dir, bucket, rid):
+            if rid in skipped:
                 continue
+            if replay_exists(self.data_dir, bucket, rid):
+                if rid in failed:  # recuperou: zera falhas passadas
+                    del failed[rid]
+                    changed = True
+                continue
+
             detail = self.fetch_detail(rid)
             if detail is None:
+                n = failed.get(rid, 0) + 1
+                failed[rid] = n
+                changed = True
+                if n >= self.skip_after_failures:
+                    skipped_list.append(rid)
+                    skipped.add(rid)
+                    del failed[rid]
+                    logger.warning(
+                        "%s — desistiu do replay %s após %d falhas consecutivas",
+                        bucket.key(), rid, n,
+                    )
                 continue
+
             save_replay(self.data_dir, bucket, rid, detail)
             downloaded += 1
+            if rid in failed:
+                del failed[rid]
+                changed = True
             logger.debug("%s — baixou %s", bucket.key(), rid)
+
+        if changed:
+            save_manifest(self.data_dir, bucket, manifest)
         return downloaded
 
     def _count_downloaded(self, bucket: Bucket, manifest: dict) -> int:
@@ -277,6 +313,7 @@ class Downloader:
                 "last_date": manifest.get("last_date"),
                 "manifest": len(manifest["ids"]),
                 "downloaded": self._count_downloaded(bucket, manifest),
+                "skipped": len(manifest.get("skipped", [])),
                 "exhausted": manifest.get("exhausted", False),
             },
         )

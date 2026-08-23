@@ -40,6 +40,11 @@ sort_dir: "asc"
 max_retries: 3
 retry_backoff: 5
 
+# Após N falhas consecutivas ao baixar um replay específico (ex.: removido/
+# privado), o ID é marcado como "skipped" no manifest e para de ser tentado a
+# cada passada — evita gastar requests com replays mortos.
+skip_after_failures: 5
+
 # Quando todos os buckets estiverem esgotados, aguarda esse tempo (segundos)
 # antes de re-procurar por replays novos. 0 desliga o modo infinito.
 rescan_interval: 0

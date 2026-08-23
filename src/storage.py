@@ -110,6 +110,8 @@ def load_manifest(data_dir: Path, bucket: Bucket) -> dict:
             "page": 0,
             "last_date": None,
             "ids": [],
+            "skipped": [],
+            "failed": {},
             "exhausted": False,
         }
     return manifest
