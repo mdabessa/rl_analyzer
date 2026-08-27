@@ -1,0 +1,151 @@
+services:
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-airflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}
+      POSTGRES_DB: ${POSTGRES_DB:-airflow}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  redis:
+    image: redis:7
+    restart: always
+
+  airflow-init:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      # SSH (mesmo setup dos demais serviços, para o entrypoint não reclamar)
+      - ~/.ssh:/home/airflow/ssh-conf:ro
+      - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      # Airflow 3 default é SimpleAuthManager (senha aleatória no log); FAB faz
+      # o `airflow users create` do init valer como credencial de login.
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - AIRFLOW_WWW_USERNAME=${AIRFLOW_WWW_USERNAME:-airflow}
+      - AIRFLOW_WWW_PASSWORD=${AIRFLOW_WWW_PASSWORD:?Defina AIRFLOW_WWW_PASSWORD no .env}
+    command: >
+      bash -c "airflow db migrate && (airflow users create --username \"$$AIRFLOW_WWW_USERNAME\" --password \"$$AIRFLOW_WWW_PASSWORD\" --firstname Air --lastname Flow --role Admin --email admin@example.com >/dev/null 2>&1 || echo '[init] usuário admin já existe — ok')"
+    restart: "no"
+
+  webserver:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts   # Monta scripts utilitários
+      - ./data:/opt/data         # Monta pasta de dados
+      # SSH p/ VPS: monta o ~/.ssh do host (config/known_hosts) + a chave privada
+      # (que fica fora de ~/.ssh). O entrypoint da imagem copia a chave para
+      # /home/airflow/.ssh com perms corretas e gera o config do alias `vps`.
+      # A chave é montada em caminho separado (não dá pra montar arquivo dentro
+      # de um bind mount de diretório read-only).
+      - ~/.ssh:/home/airflow/ssh-conf:ro
+      - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - VPS_HOST=${VPS_HOST:-}
+      - VPS_USER=${VPS_USER:-}
+    command: api-server   # Airflow 3: 'webserver' foi removido; api-server serve UI+API
+    restart: always
+
+  scheduler:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/data
+      # SSH p/ VPS (ver comentário no webserver)
+      - ~/.ssh:/home/airflow/ssh-conf:ro
+      - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - VPS_HOST=${VPS_HOST:-}
+      - VPS_USER=${VPS_USER:-}
+    command: scheduler
+    restart: always
+
+  dag-processor:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/data
+      # SSH p/ VPS (ver comentário no webserver)
+      - ~/.ssh:/home/airflow/ssh-conf:ro
+      - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - VPS_HOST=${VPS_HOST:-}
+      - VPS_USER=${VPS_USER:-}
+    command: dag-processor   # Airflow 3: parse de DAG é um componente separado
+    restart: always
+
+  worker:
+    build: .
+    depends_on:
+      - postgres
+      - redis
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./logs:/opt/airflow/logs
+      - ./plugins:/opt/airflow/plugins
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/data
+      # SSH p/ VPS (ver comentário no webserver)
+      - ~/.ssh:/home/airflow/ssh-conf:ro
+      - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
+    environment:
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CELERY__BROKER_URL=redis://redis:6379/0
+      - AIRFLOW__CELERY__RESULT_BACKEND=db+postgresql://${POSTGRES_USER:-airflow}:${POSTGRES_PASSWORD:?Defina POSTGRES_PASSWORD no .env}@postgres/${POSTGRES_DB:-airflow}
+      - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
+      - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+      - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - VPS_HOST=${VPS_HOST:-}
+      - VPS_USER=${VPS_USER:-}
+    command: celery worker
+    restart: always
+
+volumes:
+  postgres_data:
