@@ -1,37 +1,16 @@
 """Coleta periodicamente os replays baixados na VPS e limpa o disco remoto.
-
-Pré-requisito SSH (já provisionado pela imagem — ver airflow/Dockerfile e
-airflow/entrypoint.sh): dentro do container o alias `vps` funciona, usando a
-chave montada pelo compose. Teste rápido:
-
-    docker compose -f airflow/docker-compose.yaml exec scheduler \
-        ssh -T vps 'echo ok && df -h /home/ubuntu'
-
-Atenção sobre o cleanup:
-  O downloader da VPS deduplica por EXISTÊNCIA do arquivo local
-  (``src/storage.replay_exists``). Se você apagar os .json remotos, a próxima
-  passada do downloader RE-BAIXA tudo, queimando a cota da API. Por isso:
-    - só apagamos arquivos em ``replays/`` mais antigos que CLEANUP_MIN_AGE_HOURS
-      (já copiados em execuções anteriores bem-sucedidas);
-    - ``manifests/`` e ``state.json`` NUNCA são apagados (o downloader precisa
-      deles para saber o progresso).
-  Mesmo assim, se o downloader ainda estiver ativo naquele bucket, ele pode
-  re-baixar. Solução definitiva: marcar os IDs como "synced" no manifest (mudança
-  pequena em src/downloader.py) — é um follow-up recomendado.
 """
 
 from datetime import datetime, timedelta
 
 from airflow import DAG
 from airflow.operators.bash import BashOperator
+from airflow.providers.ssh.operators.ssh import SSHOperator
 
-# Diretório de dados NA VPS (o serviço systemd rl-download usa /home/ubuntu/rl_data).
-VPS_DATA_DIR = "/home/ubuntu/rl_data"
+
+VPS_DATA_DIR = "/home/ubuntu/rl_analyzer"
 # Diretório local dentro do container: ./data (bind mount /opt/data).
 LOCAL_DATA_DIR = "/opt/data"
-# Só apaga no VPS arquivos mais antigos que isto (horas).
-CLEANUP_MIN_AGE_HOURS = 12
-CLEANUP_MIN_AGE_MIN = CLEANUP_MIN_AGE_HOURS * 60
 
 DEFAULT_ARGS = {
     "owner": "airflow",
@@ -44,30 +23,61 @@ with DAG(
     dag_id="sync_from_vps",
     default_args=DEFAULT_ARGS,
     description="Puxa replays da VPS e limpa o disco remoto",
-    schedule="0 */6 * * *",  # a cada 6h — ajuste conforme a velocidade do downloader
+    schedule="0 */6 * * *",
     start_date=datetime(2026, 8, 1),
     catchup=False,
     max_active_runs=1,
     tags=["vps", "download", "rsync"],
 ) as dag:
 
+    stop_downloader = SSHOperator(
+        task_id="stop_downloader",
+        ssh_conn_id="vps",
+        command=(
+            "systemctl stop rl-download"
+        ),
+    )
+
+    remove_stubs = SSHOperator(
+        task_id="remove_stubs",
+        ssh_conn_id="vps",
+        command=(
+            f"python3 /home/ubuntu/vps_sync/remove_fakes.py {VPS_DATA_DIR}"
+        ),
+    )
+
     pull = BashOperator(
-        task_id="rsync_from_vps",
+        task_id="pull_replays",
         bash_command=(
-            "rsync -avz --partial --exclude='.tmp-*' "
-            f"vps:{VPS_DATA_DIR}/ {LOCAL_DATA_DIR}/"
+            f"rsync -avP --ignore-existing vps:{VPS_DATA_DIR}/replays/ {LOCAL_DATA_DIR}/replays/ && "
+            f"rsync -avP vps:{VPS_DATA_DIR}/manifests/ {LOCAL_DATA_DIR}/manifests/ && "
+            f"rsync -avP vps:{VPS_DATA_DIR}/state.json {LOCAL_DATA_DIR}/state.json"
         ),
     )
 
-    # Só roda se o rsync acima terminou com sucesso (trigger_rule padrão).
-    cleanup = BashOperator(
-        task_id="cleanup_vps_replays",
-        bash_command=(
-            "ssh vps '"
-            f"find {VPS_DATA_DIR}/replays -type f -mmin +{CLEANUP_MIN_AGE_MIN} -delete && "
-            f"find {VPS_DATA_DIR} -type d -empty -delete"
-            "'"
+    cleanup = SSHOperator(
+        task_id="cleanup_remote",
+        ssh_conn_id="vps",
+        command=(
+            f"find {VPS_DATA_DIR}/replays -type f -delete"
         ),
     )
 
-    pull >> cleanup
+    create_stubs = SSHOperator(
+        task_id="create_stubs",
+        ssh_conn_id="vps",
+        command=(
+            f"python3 /home/ubuntu/vps_sync/create_fakes.py {VPS_DATA_DIR}"
+        ),
+    )
+
+    start_downloader = SSHOperator(
+        task_id="start_downloader",
+        ssh_conn_id="vps",
+        command=(
+            "sudo systemctl daemon-reload && "
+            "sudo systemctl enable --now rl-download"
+        ),
+    )
+
+    stop_downloader >> remove_stubs >> pull >> cleanup >> create_stubs >> start_downloader
