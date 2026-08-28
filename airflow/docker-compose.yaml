@@ -49,7 +49,9 @@ services:
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./scripts:/opt/airflow/scripts   # Monta scripts utilitários
-      - ./data:/opt/data         # Monta pasta de dados
+      # Data lake NA RAIZ do repo (../data), não em airflow/data. `./data` aqui
+      # seria relativo ao airflow/ e a sincronização cairia no lugar errado.
+      - ../data:/opt/data
       # SSH p/ VPS: monta o ~/.ssh do host (config/known_hosts) + a chave privada
       # (que fica fora de ~/.ssh). O entrypoint da imagem copia a chave para
       # /home/airflow/.ssh com perms corretas e gera o config do alias `vps`.
@@ -64,6 +66,10 @@ services:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      # Mesmo JWT_SECRET em TODOS os componentes ([api_auth] jwt_secret). O
+      # scheduler assina o token da task e o api-server valida; se cada
+      # processo gerar o seu (default), dá 'Invalid auth token' no worker.
+      - AIRFLOW__API_AUTH__JWT_SECRET=${AIRFLOW_API_AUTH_JWT_SECRET:?Defina AIRFLOW_API_AUTH_JWT_SECRET no .env}
       - VPS_HOST=${VPS_HOST:-}
       - VPS_USER=${VPS_USER:-}
     command: api-server   # Airflow 3: 'webserver' foi removido; api-server serve UI+API
@@ -79,7 +85,7 @@ services:
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./scripts:/opt/airflow/scripts
-      - ./data:/opt/data
+      - ../data:/opt/data   # Data lake na raiz do repo (não airflow/data)
       # SSH p/ VPS (ver comentário no webserver)
       - ~/.ssh:/home/airflow/ssh-conf:ro
       - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
@@ -90,6 +96,9 @@ services:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - AIRFLOW__API_AUTH__JWT_SECRET=${AIRFLOW_API_AUTH_JWT_SECRET:?Defina AIRFLOW_API_AUTH_JWT_SECRET no .env}
+      # Conexão SSH 'vps' (ssh_conn_id="vps") via env — ver worker.
+      - AIRFLOW_CONN_VPS=ssh://${VPS_USER:?Defina VPS_USER no .env}@${VPS_HOST:?Defina VPS_HOST no .env}?key_file=/home/airflow/.ssh/vps.key&no_host_key_check=true
       - VPS_HOST=${VPS_HOST:-}
       - VPS_USER=${VPS_USER:-}
     command: scheduler
@@ -105,7 +114,7 @@ services:
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./scripts:/opt/airflow/scripts
-      - ./data:/opt/data
+      - ../data:/opt/data   # Data lake na raiz do repo (não airflow/data)
       # SSH p/ VPS (ver comentário no webserver)
       - ~/.ssh:/home/airflow/ssh-conf:ro
       - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
@@ -116,6 +125,9 @@ services:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      - AIRFLOW__API_AUTH__JWT_SECRET=${AIRFLOW_API_AUTH_JWT_SECRET:?Defina AIRFLOW_API_AUTH_JWT_SECRET no .env}
+      # Conexão SSH 'vps' (ssh_conn_id="vps") via env — ver worker.
+      - AIRFLOW_CONN_VPS=ssh://${VPS_USER:?Defina VPS_USER no .env}@${VPS_HOST:?Defina VPS_HOST no .env}?key_file=/home/airflow/.ssh/vps.key&no_host_key_check=true
       - VPS_HOST=${VPS_HOST:-}
       - VPS_USER=${VPS_USER:-}
     command: dag-processor   # Airflow 3: parse de DAG é um componente separado
@@ -131,7 +143,7 @@ services:
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
       - ./scripts:/opt/airflow/scripts
-      - ./data:/opt/data
+      - ../data:/opt/data   # Data lake na raiz do repo (não airflow/data)
       # SSH p/ VPS (ver comentário no webserver)
       - ~/.ssh:/home/airflow/ssh-conf:ro
       - ${SSH_KEY_PATH:?Defina SSH_KEY_PATH no .env - chave privada da VPS}:/home/airflow/ssh-key/vps.key:ro
@@ -142,6 +154,18 @@ services:
       - AIRFLOW__CORE__EXECUTOR=CeleryExecutor
       - AIRFLOW__CORE__AUTH_MANAGER=airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
       - AIRFLOW__API__SECRET_KEY=${AIRFLOW_API_SECRET_KEY:?Defina AIRFLOW_API_SECRET_KEY no .env}
+      # JWT_SECRET compartilhado com api-server/scheduler ([api_auth] jwt_secret)
+      - AIRFLOW__API_AUTH__JWT_SECRET=${AIRFLOW_API_AUTH_JWT_SECRET:?Defina AIRFLOW_API_AUTH_JWT_SECRET no .env}
+      # Airflow 3: o worker (supervisor) NÃO fala direto com o banco; o
+      # subprocesso da task conecta no execution API server (/execution/) do
+      # api-server. Sem isso, o default é http://localhost:8080/execution/ →
+      # dentro do worker não há nada na 8080 → ConnectError(111) e toda task
+      # falha. 'webserver' é o nome do serviço no compose (resolvido no DNS).
+      - AIRFLOW__API__BASE_URL=http://webserver:8080
+      # Conexão SSH 'vps' usada pelo SSHOperator do DAG (ssh_conn_id="vps").
+      # Não está no banco — vem da env (secrets backend EnvironmentVariables).
+      # A chave é a provisionada pelo entrypoint em /home/airflow/.ssh/vps.key.
+      - AIRFLOW_CONN_VPS=ssh://${VPS_USER:?Defina VPS_USER no .env}@${VPS_HOST:?Defina VPS_HOST no .env}?key_file=/home/airflow/.ssh/vps.key&no_host_key_check=true
       - VPS_HOST=${VPS_HOST:-}
       - VPS_USER=${VPS_USER:-}
     command: celery worker

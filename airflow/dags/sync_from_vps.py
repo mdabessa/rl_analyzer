@@ -8,7 +8,9 @@ from airflow.providers.standard.operators.bash import BashOperator
 from airflow.providers.ssh.operators.ssh import SSHOperator
 
 
-VPS_DATA_DIR = "/home/ubuntu/rl_analyzer"
+# Data dir na VPS: o serviço rl-download roda com --data-dir
+# /home/ubuntu/rl_analyzer/data (contém replays/, manifests/ e state.json).
+VPS_DATA_DIR = "/home/ubuntu/rl_analyzer/data"
 # Diretório local dentro do container: ./data (bind mount /opt/data).
 LOCAL_DATA_DIR = "/opt/data"
 
@@ -34,7 +36,7 @@ with DAG(
         task_id="stop_downloader",
         ssh_conn_id="vps",
         command=(
-            "systemctl stop rl-download"
+            "sudo systemctl stop rl-download"
         ),
     )
 
