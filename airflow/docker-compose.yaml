@@ -48,7 +48,10 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
-      - ./scripts:/opt/airflow/scripts   # Monta scripts utilitários
+      # Scripts e src da RAIZ do repo: o DAG roda build_silver.py/build_warehouse.py
+      # (os scripts fazem sys.path.insert(parent.parent) e importam o pacote `src`).
+      - ../scripts:/opt/airflow/scripts
+      - ../src:/opt/airflow/src
       # Data lake NA RAIZ do repo (../data), não em airflow/data. `./data` aqui
       # seria relativo ao airflow/ e a sincronização cairia no lugar errado.
       - ../data:/opt/data
@@ -84,7 +87,8 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
-      - ./scripts:/opt/airflow/scripts
+      - ../scripts:/opt/airflow/scripts   # Scripts da raiz (build_silver/build_warehouse)
+      - ../src:/opt/airflow/src           # Pacote `src` da raiz (importado pelos scripts)
       - ../data:/opt/data   # Data lake na raiz do repo (não airflow/data)
       # SSH p/ VPS (ver comentário no webserver)
       - ~/.ssh:/home/airflow/ssh-conf:ro
@@ -113,7 +117,8 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
-      - ./scripts:/opt/airflow/scripts
+      - ../scripts:/opt/airflow/scripts   # Scripts da raiz (build_silver/build_warehouse)
+      - ../src:/opt/airflow/src           # Pacote `src` da raiz (importado pelos scripts)
       - ../data:/opt/data   # Data lake na raiz do repo (não airflow/data)
       # SSH p/ VPS (ver comentário no webserver)
       - ~/.ssh:/home/airflow/ssh-conf:ro
@@ -142,7 +147,8 @@ services:
       - ./dags:/opt/airflow/dags
       - ./logs:/opt/airflow/logs
       - ./plugins:/opt/airflow/plugins
-      - ./scripts:/opt/airflow/scripts
+      - ../scripts:/opt/airflow/scripts   # Scripts da raiz (build_silver/build_warehouse)
+      - ../src:/opt/airflow/src           # Pacote `src` da raiz (importado pelos scripts)
       - ../data:/opt/data   # Data lake na raiz do repo (não airflow/data)
       # SSH p/ VPS (ver comentário no webserver)
       - ~/.ssh:/home/airflow/ssh-conf:ro

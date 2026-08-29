@@ -51,9 +51,9 @@ with DAG(
     pull = BashOperator(
         task_id="pull_replays",
         bash_command=(
-            f"rsync -avP --ignore-existing vps:{VPS_DATA_DIR}/replays/ {LOCAL_DATA_DIR}/replays/ && "
-            f"rsync -avP vps:{VPS_DATA_DIR}/manifests/ {LOCAL_DATA_DIR}/manifests/ && "
-            f"rsync -avP vps:{VPS_DATA_DIR}/state.json {LOCAL_DATA_DIR}/state.json"
+            f"rsync -rvP --ignore-existing vps:{VPS_DATA_DIR}/replays/ {LOCAL_DATA_DIR}/replays/ && "
+            f"rsync -rvP vps:{VPS_DATA_DIR}/manifests/ {LOCAL_DATA_DIR}/manifests/ && "
+            f"rsync -rvP vps:{VPS_DATA_DIR}/state.json {LOCAL_DATA_DIR}/state.json"
         ),
     )
 
@@ -82,4 +82,28 @@ with DAG(
         ),
     )
 
-    stop_downloader >> remove_stubs >> pull >> cleanup >> create_stubs >> start_downloader
+    build_silver = BashOperator(
+        task_id="build_silver",
+        bash_command=(
+            f"python3 /opt/airflow/scripts/build_silver.py --data-dir {LOCAL_DATA_DIR}"
+        ),
+    )
+
+    build_warehouse = BashOperator(
+        task_id="build_warehouse",
+        bash_command=(
+            f"python3 /opt/airflow/scripts/build_warehouse.py --data-dir {LOCAL_DATA_DIR} "
+            f"--db {LOCAL_DATA_DIR}/warehouse.duckdb"
+        ),
+    )
+
+    (
+        stop_downloader
+        >> remove_stubs
+        >> pull
+        >> cleanup
+        >> create_stubs
+        >> start_downloader
+        >> build_silver
+        >> build_warehouse
+    )
