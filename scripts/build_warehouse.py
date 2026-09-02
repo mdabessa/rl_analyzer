@@ -45,7 +45,8 @@ def build_warehouse(data_dir: str | Path, db_path: str | Path) -> Path:
             SELECT season, playlist_id, tier,
                    count(*)                                  AS n_replays,
                    count(DISTINCT map_code)                  AS n_maps,
-                   sum(CASE WHEN blue_won THEN 1 ELSE 0 END) AS n_blue_wins,
+                   sum(CASE WHEN "blue.stats.core.goals" > "orange.stats.core.goals"
+                            THEN 1 ELSE 0 END)              AS n_blue_wins,
                    round(avg(duration), 0)                   AS avg_duration_s
             FROM replays
             GROUP BY season, playlist_id, tier
@@ -55,11 +56,11 @@ def build_warehouse(data_dir: str | Path, db_path: str | Path) -> Path:
             """
             CREATE OR REPLACE VIEW v_players_by_bucket AS
             SELECT season, playlist_id, tier, team,
-                   count(*)                    AS n_players,
-                   count(DISTINCT player_uid)  AS n_unique_players,
-                   round(avg(goals), 2)        AS avg_goals,
-                   round(avg(score), 0)        AS avg_score,
-                   round(avg(shooting_pct), 1) AS avg_shooting_pct
+                   count(*)                                AS n_players,
+                   count(DISTINCT "id.id")                 AS n_unique_players,
+                   round(avg("stats.core.goals"), 2)       AS avg_goals,
+                   round(avg("stats.core.score"), 0)       AS avg_score,
+                   round(avg("stats.core.shooting_percentage"), 1) AS avg_shooting_pct
             FROM players
             GROUP BY season, playlist_id, tier, team
             """
@@ -67,14 +68,14 @@ def build_warehouse(data_dir: str | Path, db_path: str | Path) -> Path:
         con.execute(
             """
             CREATE OR REPLACE VIEW v_top_players AS
-            SELECT name, platform, player_uid, playlist_id,
-                   count(*)                AS n_replays,
-                   sum(goals)              AS total_goals,
-                   sum(score)              AS total_score,
-                   round(avg(score), 0)    AS avg_score
+            SELECT name, "id.platform" AS platform, "id.id" AS player_uid, playlist_id,
+                   count(*)                        AS n_replays,
+                   sum("stats.core.goals")        AS total_goals,
+                   sum("stats.core.score")        AS total_score,
+                   round(avg("stats.core.score"), 0) AS avg_score
             FROM players
             WHERE name IS NOT NULL
-            GROUP BY name, platform, player_uid, playlist_id
+            GROUP BY name, "id.platform", "id.id", playlist_id
             """
         )
 
