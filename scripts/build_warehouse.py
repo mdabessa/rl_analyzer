@@ -29,12 +29,18 @@ def build_warehouse(data_dir: str | Path, db_path: str | Path) -> Path:
     con = duckdb.connect(str(db_path))
     try:
         # --- silver (materializado em tabelas) ---
+        # Os arquivos Parquet guardam as colunas de partição (season/playlist_id/
+        # tier) DENTRO do arquivo (WRITE_PARTITION_COLUMNS no silver). Lemos com
+        # hive_partitioning=false para usar os valores do conteúdo e nunca
+        # depender de inferência das pastas (o tier da pasta não deve vazar).
         con.execute(
-            "CREATE OR REPLACE TABLE replays AS SELECT * FROM read_parquet(?)",
+            "CREATE OR REPLACE TABLE replays AS "
+            "SELECT * FROM read_parquet(?, hive_partitioning=false)",
             [parquet_replays],
         )
         con.execute(
-            "CREATE OR REPLACE TABLE players AS SELECT * FROM read_parquet(?)",
+            "CREATE OR REPLACE TABLE players AS "
+            "SELECT * FROM read_parquet(?, hive_partitioning=false)",
             [parquet_players],
         )
 

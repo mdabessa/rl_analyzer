@@ -28,7 +28,10 @@ objetos aninhados viram colunas com o caminho separado por ``.``
 A leitura usa ``read_json`` do DuckDB com schema explícito (gerado a partir das
 folhas descobertas): campos ausentes viram NULL e chaves extras são ignoradas sem
 erro de binding. ``hive_partitioning=false`` garante leitura do conteúdo do JSON
-(as pastas ``season=f12/.../tier=0`` usam índice 0-based e não devem vazar).
+(as pastas ``season=f12/.../tier=0`` usam índice 0-based e não devem vazar). Na
+escrita, ``WRITE_PARTITION_COLUMNS true`` grava ``season/playlist_id/tier``
+também dentro de cada arquivo Parquet (Parquet autodescritivo), então nenhuma
+leitura downstream depende de inferência Hive das pastas.
 
 Incremental e leve (roda em background, ex.: Airflow)
 -----------------------------------------------------
@@ -328,11 +331,17 @@ def _leaves_for(table: str, replay_leaves, player_leaves):
 
 
 def _copy(con, sql, sql_files, columns, dest_root: Path) -> None:
-    """Executa um COPY particionado para ``dest_root`` (pasta já deve existir)."""
+    """Executa um COPY particionado para ``dest_root`` (pasta já deve existir).
+
+    ``WRITE_PARTITION_COLUMNS true`` grava ``season/playlist_id/tier`` TAMBÉM
+    dentro de cada arquivo Parquet, além da pasta. Assim nenhuma leitura
+    downstream depende da inferência Hive das pastas (folder tier é 0-based no
+    bronze e nunca deve vazar; aqui os valores são sempre os do conteúdo).
+    """
     con.execute(
         f"COPY ({sql}) TO '{dest_root}' "
         "(FORMAT PARQUET, PARTITION_BY (season, playlist_id, tier), "
-        "OVERWRITE_OR_IGNORE)",
+        "OVERWRITE_OR_IGNORE, WRITE_PARTITION_COLUMNS true)",
         [sql_files, columns],
     )
 
@@ -528,7 +537,8 @@ def _compact_partitions(con, out_dir: Path, table: str, max_files: int) -> int:
             con.execute(
                 f"COPY (SELECT * FROM read_parquet('{part}/*.parquet')) "
                 f"TO '{staging}' (FORMAT PARQUET, "
-                "PARTITION_BY (season, playlist_id, tier), OVERWRITE_OR_IGNORE)"
+                "PARTITION_BY (season, playlist_id, tier), "
+                "OVERWRITE_OR_IGNORE, WRITE_PARTITION_COLUMNS true)"
             )
             produced = sorted(staging.rglob("*.parquet"))
             for f in files:
